@@ -3,7 +3,7 @@
 This is a simple debugger that illustrates the use of the hardware
 breakpoint-on-halt and single-step capabilities of the Zilog Z280 CPU.
 
-The core of the debugger is based on the very simple debug monitor built in
+The core of the debugger is based on the very simple debug monitor built into
 the RSX280 operating system. This version runs in standalone mode using the
 Z280 internal UART to communicate with the user's terminal, and assumes that
 the CPU is in Z80 mode (MMU disabled). That means also that the task to be
