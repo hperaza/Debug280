@@ -738,7 +738,7 @@ continue:
 ; XM
 ; show MMU state
 ; Xrr
-; display/modify CPU register (TODO)
+; display/modify CPU register
 
 showregs:
 	ld	hl,(lnptr)
