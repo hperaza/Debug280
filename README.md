@@ -1,7 +1,7 @@
 # RSX280 debugger
 
 This is a simple debugger that illustrates the use of the hardware
-breakpoint-on-halt and single-step capabilities of the Zilog Z280 chip.
+breakpoint-on-halt and single-step capabilities of the Zilog Z280 CPU.
 
 The core of the debugger is based on the very simple debug monitor built in
 the RSX280 operating system. This version runs in standalone mode using the
