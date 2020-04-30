@@ -1,4 +1,4 @@
-# RSX280 debugger
+# Z280 debugger
 
 This is a simple debugger that illustrates the use of the hardware
 breakpoint-on-halt and single-step capabilities of the Zilog Z280 CPU.
