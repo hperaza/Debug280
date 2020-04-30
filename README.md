@@ -38,14 +38,14 @@ included), and will be embedded into a future version of ZZmon.
  * E*addr* -- Examine/modify memory starting from *addr*. The address of the
    memory location is displayed, followed by the old contents. Entering a new
    value modifies the contents, pressing enter on an empty line leaves the
-   contents unchanged. End with Ctrl-C or a dot.
+   contents unchanged. End with Ctrl-C or with a dot.
  * B*addr* -- Place a breakpoint (HALT instruction) at address *addr*. The
    current version of the debugger supports only one breakpoint at a time.
    Thus, if the B command is used to enter additional breakpoints, the
    instructions at the address of the older breakpoints will not be restored
    when the corresponding breakpoint is hit. Breakpoints are not persistent,
    meaning that once hit, it will not be triggered again. That means that
-   you can place a second breakpoint once the first is hit.
+   you can place a second breakpoint after the first is hit.
  * G*addr* -- Go to address *addr*. Starts executing the user code until a
    breakpoint is hit. If *addr* is not specified, the execution will continue
    from the current user PC value.
