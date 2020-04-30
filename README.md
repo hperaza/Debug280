@@ -1,9 +1,9 @@
 # RSX280 debugger
 
-This is a simple Z280 debugger that illustrates how to use the hardware
-breakpoint-on-halt and single-step capabilities of the chip.
+This is a simple debugger that illustrates the use of the hardware
+breakpoint-on-halt and single-step capabilities of the Z280 chip.
 
-The core of the debugger is based on the very simple debug monitor built-in
+The core of the debugger is based on the very simple debug monitor built in
 the RSX280 operating system. This version runs in standalone mode using the
 Z280 internal UART to communicate with the user's terminal, and assumes that
 the CPU is in Z80 mode (MMU disabled). That means also that the task to be
@@ -13,16 +13,16 @@ Z280 MMU and system/user modes. In fact, part of the code is already there
 (i.e. the MMU state is saved/restored when entering/leaving a trap, LDUP is
 used by the dump command to display memory from another bank, etc.)
 
-The debugger includes a Z280 disassembler in a separate module, so it could
-be used by other applications.
+The debugger includes a Z280 disassembler in a separate module that could
+be used by other applications as well.
 
 As built, the debugger runs from address 0100h and uses memory up to 177Fh
 approximately (most of the space is taken up by the disassembler module);
-page zero is used for the Z280 interrupt/trap table. The code can be easily
-modified to run at a different address.
+page zero is reserved for the Z280 interrupt/trap table. The code can be
+easily modified to run at a different address.
 
-The debugger has been tested with the Z280RC board (a HEX file is included),
-and will be embedded into a future version of ZZmon.
+The debugger has been tested with Bill Shen's Z280RC board (a HEX file is
+included), and will be embedded into a future version of ZZmon.
 
 ## Debugger commands:
 
