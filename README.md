@@ -55,8 +55,8 @@ included), and will be embedded into a future version of ZZmon.
  * I*port* -- Input value from *port*.
  * O*port*,*value* -- Output *value* to *port*.
  * W*addr* -- Display 16-bit word contents at the memory location *addr*.
- * X -- Display the contents of the user registers.
- * X*rp* -- Examine/modify register pair *rp*.
+ * X -- Display the contents of the CPU registers.
+ * X*rp* -- Examine/modify CPU register pair *rp*.
  * XM -- Display the user MMU state.
  * Z*addr*,*n* -- Disassemble *n* instructions starting from *addr*. If
    *addr* is not specified, the disassembly will continue from there the
@@ -66,18 +66,18 @@ included), and will be embedded into a future version of ZZmon.
 
 ## Example usage on the Z280RC board:
 
- 1 Reset the Z280RC to get the ZZmon prompt, and send the debug180.hex file
-   using your favorite terminal program.
- 2 Load the program you want to debug, ensuring it will not overlay the
-   debugger.
- 3 Use the G0100 command to start the debugger.
- 4 At the Z280> prompt, use the B command to set a breakpoint on your
-   program.
- 5 Start your program with the G command.
- 6 When the breakpoint is hit, the CPU register contents will be displayed
-   followed by the mnemonics of the instruction to be executed next (i.e.
-   where the CPU stopped).
- 7 Use the T command to single-step though the code, etc.
+ 1. Reset the Z280RC to get the ZZmon prompt, and send the debug180.hex file
+    using your favorite terminal program.
+ 2. Load the program you want to debug, ensuring it will not overlay the
+    debugger.
+ 3. Use the G0100 command to start the debugger.
+ 4. At the Z280> prompt, use the B command to set a breakpoint on your
+    program.
+ 5. Start your program with the G command.
+ 6. When the breakpoint is hit, the CPU register contents will be displayed
+    followed by the mnemonics of the instruction to be executed next (i.e.
+    where the CPU stopped).
+ 7. Use the T command to single-step though the code, etc.
 
 You can also start by setting the PC value with the XPC command followed by
 the T command to go directly into single-step mode, etc.
