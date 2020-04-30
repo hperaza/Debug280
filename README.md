@@ -1,7 +1,7 @@
 # RSX280 debugger
 
 This is a simple debugger that illustrates the use of the hardware
-breakpoint-on-halt and single-step capabilities of the Z280 chip.
+breakpoint-on-halt and single-step capabilities of the Zilog Z280 chip.
 
 The core of the debugger is based on the very simple debug monitor built in
 the RSX280 operating system. This version runs in standalone mode using the
@@ -14,7 +14,7 @@ Z280 MMU and system/user modes. In fact, part of the code is already there
 used by the dump command to display memory from another bank, etc.)
 
 The debugger includes a Z280 disassembler in a separate module that could
-be used by other applications as well.
+be used by other applications.
 
 As built, the debugger runs from address 0100h and uses memory up to 177Fh
 approximately (most of the space is taken up by the disassembler module);
