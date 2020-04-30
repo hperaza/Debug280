@@ -1,0 +1,1068 @@
+;**********************************************************************;
+;                                                                      ;
+;   Simple Z280 standalone debug monitor for the Z280RC board.         ;
+;   Copyright (C) 2020, Hector Peraza.                                 ;
+;                                                                      ;
+;   This program is free software; you can redistribute it and/or      ;
+;   modify it under the terms of the GNU General Public License as     ;
+;   published by the Free Software Foundation; either version 2 of     ;
+;   the License, or (at your option) any later version.                ;
+;                                                                      ;
+;   This program is distributed in the hope that it will be useful,    ;
+;   but WITHOUT ANY WARRANTY; without even the implied warranty of     ;
+;   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the      ;
+;   GNU General Public License for more details.                       ;
+;                                                                      ;
+;   You should have received a copy of the GNU General Public License  ;
+;   along with this program; if not, write to the Free Software        ;
+;   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.          ;
+;                                                                      ;
+;**********************************************************************;
+
+	.Z280
+
+	include	Z280.INC
+
+CR	equ	0Dh
+LF	equ	0Ah
+TAB	equ	09h
+
+FALSE	equ	0
+TRUE	equ	NOT FALSE
+
+	cseg
+
+	public	GETB,GETAB,GETW,GETADR,PUTCH,AHEX,HLHEX
+
+	extrn	DIS280
+
+;-----------------------------------------------------------------------
+
+; Main entry point
+
+DEBUG::	di
+	ld	sp,mon_stack	; setup local stack
+	call	init
+cmd:	ld	sp,mon_stack	; restore local stack
+	ld	hl,prompt
+	call	print		; output prompt
+	call	getln		; get command
+	push	cmd		; push return address
+	ld	hl,lnbuf
+	call	skipbl		; skip blanks and get command char
+	or	a
+	ret	z		; ignore empty lines
+	inc	hl
+	ld	(lnptr),hl
+	call	ucase		; convert command char to uppercase
+	cp	'X'		; show regs?
+	jp	z,showregs
+	cp	'T'		; trace (single-step)?
+	jp	z,trace
+	push	af
+	call	get_args	; parse command and get arguments
+	ld	bc,(arg3)	; load arguments into registers
+	ld	de,(arg2)
+	ld	hl,(arg1)
+	pop	af
+	cp	'D'		; dump?
+	jp	z,dump
+	cp	'F'		; fill?
+	jp	z,fill
+	cp	'S'		; search?
+	jp	z,search
+	cp	'E'		; examine?
+	jp	z,exam
+	cp	'B'		; set breakpoint?
+	jp	z,setbrk
+	cp	'C'		; clear breakpoint?
+	jp	z,clrbrk
+	cp	'G'		; go?
+	jp	z,run
+	cp	'I'		; input?
+	jp	z,inport
+	cp	'O'		; output?
+	jp	z,outport
+	cp	'W'		; word?
+	jp	z,word
+	cp	'Z'		; disassemble?
+	jp	z,disasm
+error:	call	cr_lf
+	ld	a,'?'		; unknown command
+	call	mon_putch
+	jr	cmd
+
+prompt:	db	CR,LF,"Z280>",0
+
+; init MMU, setup ITVT, etc.
+
+init:	ld	hl,$ITBL
+	ld	de,0
+	ld	bc,28*4
+	ldir			; copy ITVT to page zero
+	ld	hl,0		; note: assuming Z80-mode!
+	ld	c,ITV
+	ldctl	(c),hl		; set interrupt/trap table pointer
+	ld	c,ISR
+;;	ld	hl,0
+	ldctl	(c),hl		; disable vectored external ints
+	im	3
+;;	ld	hl,0
+	ldctl	usp,hl
+	ld	de,0
+	dec	hl
+	dec	hl
+	ldw	(hl),de
+	dec	hl
+	dec	hl
+	ldw	(hl),de
+	ld	(pgm_sp),hl
+	ld	hl,DEBUG
+	ld	(lastz),hl
+	ld	(lastd),hl
+	ret
+
+; get command line
+
+getln:	ld	hl,lnbuf	; HL = start of command buffer
+	ld	b,1
+get:	call	mon_getch	; get char
+	cp	CR
+	jr	z,eol		; CR ends command
+	cp	8
+	jr	z,bkspc		; del and backspace erase prev char
+	cp	7Fh
+	jr	z,bkspc
+	cp	3
+	jr	z,ctrlc		; ^C restarts
+	cp	' '
+	jr	c,get		; ignore any other control chars
+	ld	c,a
+	ld	a,b
+	cp	40-1		; max length reached?
+	jr	nc,get		; ignore extra input if yes
+	ld	a,c
+	call	mon_putch	; echo char
+	ld	(hl),a		; store in buffer
+	inc	hl		; advance pointer
+	inc	b		;  and counter
+	jr	get		; loop
+bkspc:	dec	b
+	jr	z,getln
+	ld	a,8
+	call	mon_putch	; erase prev char from the screen
+	call	space
+	ld	a,8
+	call	mon_putch
+	dec	hl
+	jr	get
+eol:	ld	(hl),0		; end of input, append null char
+	call	mon_putch
+	ret
+ctrlc:	ld	hl,ctlcm
+	call	print
+	jp	cmd
+
+ctlcm:	db	"^C",CR,LF,0
+
+; convert char to uppercase
+
+ucase:	cp	'a'
+	ret	c
+	cp	'z'+1
+	ret	nc
+	and	5Fh
+	ret
+
+; output string
+
+print:	ld	a,(hl)
+	or	a
+	ret	z
+	call	mon_putch
+	inc	hl
+	jr	print
+
+; skip blanks
+
+skip:	inc	hl
+skipbl:	ld	a,(hl)
+	or	a
+	ret	z
+	cp	' '
+	jr	z,skip
+	cp	TAB
+	jr	z,skip
+	ret
+
+; get command line arguments
+
+get_args:
+	ld	hl,0
+	ld	(arg1),hl	; unspecified args default to zero
+	ld	(arg2),hl
+	ld	(arg3),hl
+	xor	a
+	ld	(argset),a
+	ld	de,(lnptr)
+	ld	c,01h
+	call	gethex		; get first arg
+	ld	(arg1),hl
+	ld	(arg2),hl
+	ret	c
+	ld	c,02h
+	call	gethex		; get second arg
+	ld	(arg2),hl
+	ret	c
+	ld	c,04h
+	call	gethex		; get third arg
+	ld	(arg3),hl
+	ret	c
+	jp	error		; error if more args
+
+; get hexadecimal value from command line
+
+gethex:	ld	hl,0
+gh1:	ld	a,(de)
+	or	a		; end of command line?
+	scf			; return with CY set if yes
+	ret	z
+	inc	de
+	cp	' '		; ignore blanks
+	jr	z,gh1
+	cp	','		; comma separates arguments
+	ret	z
+	call	tohex
+	jp	c,error
+	call	adddig
+	jp	c,error
+	ld	a,(argset)
+	or	c		; set bit if argument present
+	ld	(argset),a
+	jr	gh1
+	
+adddig:	add	hl,hl
+	ret	c
+	add	hl,hl
+	ret	c
+	add	hl,hl
+	ret	c
+	add	hl,hl
+	ret	c
+	add	hl,a
+	ret
+
+tohex:	call	ucase
+	sub	'0'
+	ret	c
+	cp	10
+	ccf
+	ret	nc
+	cp	11h
+	ret	c
+	cp	17h
+	ccf
+	ret	c
+	sub	7
+	ret
+
+; compare addresses and return one level higher if they match
+
+next:	call	?stop		; check for ^C abort
+	cpw	hl,de		; end address reached?
+	jr	z,cmp_eq	; return one level higher if yes
+	inc	hl		; else increment HL and return
+	ret
+cmp_eq:	inc	sp
+	inc	sp
+	ret
+
+; check for ^C abort or XON/XOFF
+
+?stop:	call	mon_status
+	or	a
+	ret	z
+	call	mon_getch
+	cp	3		; ^C aborts
+	jp	z,ctrlc
+	cp	13h		; ^S suspends output
+	ret	nz
+	call	mon_getch
+	cp	3
+	jp	z,ctrlc
+	ret
+
+; D addr1,addr2[,bank]
+; Dump region addr1...addr2
+
+dump:	push	hl
+	push	bc
+	iopage	MMUP
+	xor	a
+	out	(PDR),a
+	pop	hl
+	ld	a,(argset)
+	bit	2,a		; bank specified?
+	jr	nz,dmp0		; branch if yes
+	ld	hl,(mmu_pdr+32)	; else use saved user bank
+	jr	dmp3
+dmp0:	add	hl,hl
+	add	hl,hl
+	add	hl,hl
+	add	hl,hl
+dmp3:	set	3,l
+	ld	c,BMP
+	ld	b,16
+	ld	a,10h
+dmp1:	outw	(c),hl		; setup MMU for LDUP command
+	add	hl,a
+	djnz	dmp1
+	pop	hl
+
+	ld	a,(argset)
+	bit	0,a		; start address specified?
+	jr	nz,dmp4		; use it if yes
+	ld	hl,(lastd)	; else continue from where we stopped before
+dmp4:	bit	1,a		; end address specified?
+	jr	nz,dmp2		; use it if yes
+	ld	e,l
+	ld	d,h
+	inc	d
+	dec	de		; else display one 256-byte page
+
+dmp2:	call	out_addr	; output address
+	push	hl
+dmph:   ldup	a,(hl)		; get byte
+	call	outbyte		; output it as hexadecimal
+	call	?stop		; check for ^C abort
+	cpw	hl,de
+	jr	z,enddmp	; exit loop when done
+	inc	hl		; advance pointer
+	ld	a,l
+	and	0Fh		; max 16 bytes per line
+	jr	nz,dmph
+	pop	hl
+	call	dmpa		; dump ASCII as well
+	jr	dmp2
+
+enddmp:	inc	hl
+	ld	(lastd),hl	; remember where we stopped
+	pop	hl
+dmpa:	ldup	a,(hl)		; get byte
+	cp	' '		; printable?
+	jr	c,outdot
+	cp	7Fh
+	jr	c,char
+outdot:	ld	a,'.'		; output a dot if not
+char:	call	mon_putch
+	call	?stop		; check for ^C abort
+	cpw	hl,de
+	ret	z		; return when done
+	inc	hl
+	ld	a,l
+	and	0Fh		; max 16 chars per line
+	jr	nz,dmpa
+	ret
+
+; F addr1,addr2,byte
+; Fill region addr1...addr2 with byte
+
+fill:	ld	(hl),c
+	call	next
+	jr	fill
+
+; S addr1,addr2,byte
+; Search region addr1...addr2 for byte
+
+search:	ld	a,c
+	cp	(hl)		; byte matches?
+	jr	nz,scont	; branch if not
+	call	out_addr	; else output address
+	dec	hl
+	ld	a,(hl)
+	call	outbyte		; output prev byte
+	ld	a,'('
+	call	mon_putch
+	inc	hl
+	ld	a,(hl)
+	call	ahex		; output matching byte
+	ld	a,')'
+	call	mon_putch
+	call	space
+	inc	hl
+	ld	a,(hl)
+	call	outbyte		; output following byte
+	dec	hl
+scont:	call	next
+	jr	search
+
+; E addr[,bank]
+; Examine and modify memory starting at addr
+
+exam:	call	out_addr	; output address
+	ld	a,(hl)
+	call	outbyte		; output old contents
+	push	hl
+	call	getln		; read line
+	pop	de
+	ld	hl,lnbuf
+	call	skipbl		; skip blanks
+	ex	de,hl
+	or	a
+	jr	z,cont		; empty line keeps old value
+	cp	'.'
+	ret	z		; dot (or ^C in getln) ends operation
+	push	hl
+	call	gethex		; get new value
+	ex	de,hl		;  into DE
+	pop	hl
+	ld	(hl),e		; store it
+cont:	inc	hl
+	jr	exam		; loop
+
+; I port[,iopage][,wflag] wflag = 0 for byte else word
+; Input from port
+
+inport:	call	cr_lf
+	ld	a,l
+	call	ahex		; output port address
+	ld	a,'='
+	call	mon_putch
+	ex	de,hl
+	push	bc
+	ld	c,IOP
+	ldctl	(c),hl		; select I/O page
+	ex	de,hl
+	pop	bc
+	ld	a,b
+	or	c		; word read?
+	ld	c,l
+	ld	b,0
+	jr	z,iw		; branch if not
+	in	hl,(c)		; read
+	jp	hlhex		;  and output word
+iw:	in	a,(c)		; read
+	jp	ahex		;  and output byte
+
+; O port,byte[,iopage]
+; Output to port
+
+outport:push	hl
+	ld	l,c
+	ld	l,b
+	ld	c,IOP
+	ldctl	(c),hl		; select I/O page
+	pop	bc
+	;ld	b,0
+	ld	a,e
+	out	(c),a		; output byte
+	ret
+
+; W addr
+; Display word at addr
+
+word:	call	out_addr	; output address
+	ld	hl,(hl)
+	jp	hlhex		; output contents
+
+; B addr
+; set Breakpoint at addr. It will be automatically removed when reached.
+
+setbrk:	ld	(brkadr),hl
+	ld	a,(hl)
+	ld	(brkval),a
+	ld	(hl),76h	; halt instruction (breakpoint-on-halt mode)
+	ret
+
+; C addr
+; Clear breakpoint at addr (TODO).
+
+clrbrk:
+	ret
+
+; Z addr,num
+; Disassemble num instructions starting from addr
+
+disasm:	ld	a,(argset)
+	bit	0,a		; address given?
+	jr	nz,dis1		; use it if yes
+	ld	hl,(lastz)	; else continue from where we ended last time
+	ld	(arg1),hl
+dis1:	bit	1,a		; count given?
+	jr	nz,dis2		; use it if yes
+	ld	de,16		; else default to 16
+	ld	(arg2),de
+dis2:	ld	a,d
+	or	e
+	jr	z,dis3
+	ld	hl,(arg1)
+	call	out_addr	; output address
+	ld	a,TAB
+	call	mon_putch	; output TAB separator
+	call	DIS280		; output mnemonic
+	call	?stop		; check for ^C abort
+	ld	hl,(arg2)
+	dec	hl		; decrement count
+	ld	(arg2),hl
+	ex	de,hl
+	jr	dis2		; and loop
+dis3:	ld	hl,(arg1)
+	ld	(lastz),hl	; remember where we stopped
+	ret
+
+; routines called by the disassembler module:
+
+GETB:	push	hl
+	ld	hl,(arg1)
+	ld	a,(hl)		; return next opcode byte
+	inc	hl
+	ld	(arg1),hl
+	pop	hl
+	ret
+
+GETAB:	ld	a,(hl)		; return opcode at address HL
+	ret
+
+GETW:	call	GETB		; return next word
+	ld	l,a
+	call	GETB
+	ld	h,a
+	ret
+
+GETADR:	ld	hl,(arg1)	; return current address
+	ret
+
+PUTCH:	ld	a,c		; output char
+	jp	mon_putch
+
+; G addr
+; Go (execute) program at addr.
+
+run:	ld	ix,(pgm_sp)
+	ld	a,(argset)
+	and	01h		; an address was given?
+	jr	nz,r1		; yes, use it
+	ld	hl,(pgm_pc)	; else continue from saved PC
+r1:	ldw	(ix+2),hl	; store PC on return stack
+	res	0,(ix+1)	; clear SS bit of MSR
+	res	1,(ix+1)	; clear SSP bit of MSR
+	set	4,(ix+1)	; set BH bit of MSR
+	jp	continue
+
+; T
+; Trace single instruction
+
+trace:	ld	ix,(pgm_sp)
+	ld	hl,(pgm_pc)	; store PC on return stack
+	ldw	(ix+2),hl	;  in case user changed it
+	set	0,(ix+1)	; set SS bit of MSR
+	res	1,(ix+1)	; clear SSP bit of MSR
+	set	4,(ix+1)	; set BH bit of MSR
+	jp	continue
+
+; display 16-bit address followed by a colon and a space
+
+out_addr:
+	call	cr_lf
+	call	hlhex
+	ld	a,':'
+	call	mon_putch
+	jr	space
+
+; display 8-bit value followed by a space
+
+outbyte:
+	call	ahex
+space:	ld	a,' '
+	jp	mon_putch
+
+; display 16-bit hexadecimal value
+
+hlhex:	ld	a,h
+	call	ahex
+	ld	a,l
+ahex:	push	af
+	rrca
+	rrca
+	rrca
+	rrca
+	call	nhex
+	pop	af
+nhex:	and	0Fh
+	add	a,90h
+	daa
+	adc	a,40h
+	daa
+	jp	mon_putch
+
+; display newline
+
+cr_lf:	push	af
+	ld	a,CR
+	call	mon_putch
+	ld	a,LF
+	call	mon_putch
+	pop	af
+	ret
+
+; trap entry point: saves all registers and current MMU status, and then
+; jumps to the command loop.
+
+DBGTRP:	ld	(pgm_sp),sp
+	ld	sp,reg_stack
+	push	af		; push main reg bank
+	push	bc
+	push	de
+	push	hl
+	ex	af,af'
+	push	af		; push alternate reg bank
+	ex	af,af'
+	exx	
+	push	bc
+	push	de
+	push	hl
+	exx
+	push	ix		; push index regs
+	push	iy
+	ldctl	hl,usp
+	push	hl		; push user SP
+	ld	c,IOP
+	ldctl	hl,(c)
+	push	hl		; push user I/O page
+	ld	sp,mon_stack
+	call	savmmu		; save user MMU state
+	ld	ix,(pgm_sp)
+	ldw	de,(ix)
+	ld	(pgm_msr),de	; save user MSR
+	ldw	de,(ix+2)
+	ld	(pgm_pc),de	; save user PC
+	ld	(lastz),de	; use as default for Z command
+	call	chkbrk
+	call	pr_reason	; display trap reason
+	call	shregs		; display register contents
+	ld	hl,(pgm_pc)
+	ld	(arg1),hl
+	call	out_addr
+	ld	a,TAB
+	call	mon_putch
+	call	DIS280		; display next instruction
+	call	cr_lf
+	ld	hl,(pgm_hl)
+	ld	(lastd),hl	; use HL value as default for D command
+	jp	cmd
+
+; restore instruction at breakpoint location
+
+chkbrk:	ld	a,(reason)	; check trap reason
+	or	a		; breakpoint?
+	ret	nz		; return if not
+	ld	hl,(brkadr)
+	ld	de,(pgm_pc)
+	cpw	hl,de		; breakpoint set by us?
+	ret	nz
+	ld	a,(brkval)
+	ld	(hl),a		; yes, remove it
+	ld	hl,0
+	ld	(brkadr),hl
+	ret
+
+; display trap reason
+
+pr_reason:
+	ld	a,(reason)
+	or	a
+	ld	hl,brk_msg
+	jr	z,pr1
+	dec	a
+	ret	z		; don't print anything if single-stepping
+	dec	a
+	ld	hl,div_msg
+	jr	z,pr1
+	dec	a
+	ld	hl,acv_msg
+	jr	z,pr1
+	dec	a
+	ld	hl,prv_msg
+	jr	z,pr1
+	dec	a
+	ld	hl,ext_msg
+	ret	nz
+pr1:	call	print
+	ld	hl,atpc_msg
+	call	print		; display reason
+	ld	hl,(pgm_pc)
+	jp	hlhex		; display trap address
+
+brk_msg:
+	db	CR,LF,"Break",0
+div_msg:
+	db	CR,LF,"Divide exception",0
+acv_msg:
+	db	CR,LF,"Access violation",0
+prv_msg:
+	db	CR,LF,"Privileged instruction",0
+ext_msg:
+	db	CR,LF,"Extended intruction",0
+atpc_msg:
+	db	" at PC=",0
+
+; continue execution from last breakpoint or single-step operation
+
+continue:
+	call	rstmmu
+	ld	sp,pgm_iop
+	pop	hl
+	ld	c,IOP
+	ldctl	(c),hl		; restore user I/O page
+	pop	hl
+	ldctl	usp,hl		; restore user SP
+	pop	iy		; restore index regs
+	pop	ix
+	exx
+	pop	hl		; restore alternate reg bank
+	pop	de
+	pop	bc
+	exx
+	ex	af,af'
+	pop	af
+	ex	af,af'
+	pop	hl		; restore main reg bank
+	pop	de
+	pop	bc
+	pop	af
+	ld	sp,(pgm_sp)	; prepare to return from trap
+	retil
+
+; X
+; show CPU register contents
+; XM
+; show MMU state
+; Xrr
+; display/modify CPU register (TODO)
+
+showregs:
+	ld	hl,(lnptr)
+	call	skipbl
+	or	a		; anything follows command?
+	jp	z,shregs	; no, display all regs
+	call	ucase
+	cp	'M'		; M?
+	jp	z,showmmu	; yes, display MMU status
+	ld	(lnptr),hl
+	ld	hl,regdmp
+chrg1:	ldw	de,(hl)		; get pointer to reg value into DE
+	ld	a,d
+	or	e		; end of list?
+	jp	z,error		; error if yes, reg name not found
+	inc	hl
+	inc	hl		; point to string
+	push	de
+	call	rmatch		; register name matches?
+	pop	de
+	jr	z,chrg3		; branch if yes
+chrg2:	ld	a,(hl)		; else skip this entry
+	inc	hl
+	or	a
+	jr	nz,chrg2
+	jr	chrg1
+
+chrg3:	call	cr_lf
+	call	print		; output register name
+	dec	hl
+	ld	a,'='
+	cp	(hl)
+	call	nz,mon_putch	; follow alt regs with '='
+	ex	de,hl
+	push	hl
+	ldw	hl,(hl)
+	call	hlhex		; output reg value
+	ld	a,' '
+	call	mon_putch
+	call	getln		; read line
+	pop	de
+	ld	hl,lnbuf
+	call	skipbl		; skip blanks
+	ld	(lnptr),hl
+	or	a
+	ret	z		; empty line keeps old value
+	cp	'.'
+	ret	z		; as does dot
+	push	de
+	ld	de,(lnptr)
+	call	gethex		; get new value
+	ex	de,hl		;  into DE
+	pop	hl
+	ldw	(hl),de		; store it
+	ret
+
+rmatch:	ld	a,(hl)
+	inc	hl
+	cp	' '		; skip blanks
+	jr	z,rmatch
+	cp	CR		;  CR
+	jr	z,rmatch
+	cp	LF		;   and LF
+	jr	z,rmatch
+	dec	hl
+	push	hl		; remember start of reg name
+	ld	de,(lnptr)
+rm1:	ld	a,(hl)
+	or	a		; end of name?
+	jr	z,rm2		; return Z if yes
+	cp	'='
+	jr	z,rm2
+	ld	c,a
+	ld	a,(de)
+	call	ucase
+	cp	c		; name matches?
+	jr	nz,rm2		; return NZ if not
+	inc	hl
+	inc	de
+	jr	rm1		; loop
+rm2:	pop	hl
+	ret
+
+shregs:	ld	hl,regdmp
+srg1:	ldw	de,(hl)		; get pointer to register value into DE
+	ld	a,d
+	or	e		; end of list?
+	ret	z		; return if yes
+	inc	hl
+	inc	hl		; point to start of string
+	ex	de,hl
+	ldw	bc,(hl)		; get register value into BC
+	push	bc
+	ex	de,hl
+	call	print		; output register name
+	ex	(sp),hl
+	call	hlhex		; output value
+	pop	hl
+	inc	hl
+	jr	srg1
+
+regdmp:	dw	pgm_af
+	db	CR,LF,"AF=",0
+	dw	pgm_bc
+	db	" BC=",0
+	dw	pgm_de
+	db	" DE=",0
+	dw	pgm_hl
+	db	" HL=",0
+	dw	pgm_ix
+	db	" IX=",0
+	dw	pgm_iy
+	db	" IY=",0
+	dw	pgm_iop
+	db	" IOP=",0
+	dw	pgm_af1
+	db	CR,LF,"AF'",0
+	dw	pgm_bc1
+	db	" BC'",0
+	dw	pgm_de1
+	db	" DE'",0
+	dw	pgm_hl1
+	db	" HL'",0
+	dw	pgm_pc
+	db	" PC=",0
+	dw	pgm_sp
+	db	" SP=",0
+	dw	pgm_usp
+	db	" USP=",0
+	dw	0
+
+showmmu:
+	ld	hl,mmsg1
+	call	print
+	iopage	MMUP
+	ld	c,MMCR
+	inw	hl,(c)
+	call	hlhex
+	ld	ix,mmu_pdr	; point to saved MMU registers
+	ld	hl,mmsg2
+	call	print
+	call	sm3
+	call	cr_lf
+	call	sm1
+	ld	hl,mmsg3
+	call	print
+	call	sm3
+	call	cr_lf
+sm1:	ld	b,8
+sm2:	call	space
+	djnz	sm2
+sm3:	ld	b,8
+sm4:	ldw	hl,(ix)
+	call	hlhex
+	call	space
+	inc	ix
+	inc	ix
+	djnz	sm4
+	ret
+
+mmsg1:	db	CR,LF,'MMCR=',0
+mmsg2:	db	CR,LF,'Usr PDR ',0
+mmsg3:	db	CR,LF,'Sys PDR ',0
+
+; get char from terminal
+
+mon_getch:
+	call	mon_status
+	or	a
+	jr	z,mon_getch
+	in	a,(rdr)
+	and	7Fh
+	ret
+
+; output char to terminal
+
+mon_putch:
+	push	af
+	push	bc
+	push	hl
+	iopage	uartp
+	pop	hl
+	pop	bc
+wait:	in	a,(tcs)
+	rra
+	jr	nc,wait
+	pop	af
+	out	(tdr),a
+	ret
+
+; check terminal input status
+
+mon_status:
+	push	bc
+	push	hl
+	iopage	uartp
+	pop	hl
+	pop	bc
+	in	a,(rcs)
+	and	10h
+	ret	z
+	or	0FFh		; return FF if ready, 0 otherwise
+	ret
+
+; save MMU page descriptor registers
+
+savmmu:	iopage	MMUP
+	xor	a
+	out	(PDR),a
+	ld	b,32
+	ld	c,BMP
+	ld	hl,mmu_pdr
+	inirw
+	ret
+
+; restore MMU page descriptor registers
+
+rstmmu:	iopage	MMUP
+	xor	a
+	out	(PDR),a
+	ld	b,32
+	ld	c,BMP
+	ld	hl,mmu_pdr
+	otirw
+	ret
+
+;-----------------------------------------------------------------------
+
+; Z280 Interrupt/Trap Vector Table, will be copied to page zero
+
+$ITBL:	dw	0,0		; reserved
+	dw	0,iret2		; NMI
+	dw	0,iret2		; INTA
+	dw	0,iret2		; INTB
+	dw	0,iret2		; INTC
+	dw	0,iret2		; CT0
+	dw	0,iret2		; CT1
+	dw	0,iret2		; reserved
+	dw	0,iret2		; CT2
+	dw	0,iret2		; DMA0
+	dw	0,iret2		; DMA1
+	dw	0,iret2		; DMA2
+	dw	0,iret2		; DMA3
+	dw	0,iret2		; UART Rx
+	dw	0,iret2		; UART Tx
+	dw	0,sstrp		; single-step trap
+	dw	0,bptrp		; breakpoint-on-halt trap
+	dw	0,divtrp	; division trap
+	dw	0,iret2		; system stack overflow
+	dw	0,acvtrp	; access violation trap
+	dw	0,iret3		; system call trap
+	dw	0,prvins	; privileged instruction trap
+	dw	0,eitrp1	; EPU trap
+	dw	0,eitrp1	; EPU trap
+	dw	0,eitrp		; EPU trap
+	dw	0,eitrp		; EPU trap
+	dw	0,iret2		; reserved
+	dw	0,iret2		; reserved
+	; vector tables for INTA...INTC not used
+
+iret3:	inc	sp
+	inc	sp
+iret2:	inc	sp
+	inc	sp
+iret1:	retil
+
+bptrp:	ld	(reason),0
+	jp	DBGTRP
+
+sstrp:	ld	(reason),1
+	jp	DBGTRP
+
+divtrp:	ld	(reason),2
+	jp	DBGTRP
+
+acvtrp:	ld	(reason),3
+	jp	DBGTRP
+
+prvins:	ld	(reason),4
+	jp	DBGTRP
+
+eitrp1:	inc	sp
+	inc	sp
+eitrp:	ld	(reason),5
+	jp	DBGTRP
+
+;-----------------------------------------------------------------------
+
+	dseg
+
+arg1:	ds	2		; fisrt command argument
+arg2:	ds	2		; second command argument
+arg3:	ds	2		; third command argument
+argset:	ds	1		; specified srgument bit mak
+
+lnbuf:	ds	40		; command line buffer
+lnptr:	ds	2		; command line pointer
+
+pgm_iop:ds	2		; saved user I/O page
+pgm_usp:ds	2		; saved user SP
+pgm_iy:	ds	2		; saved user registers
+pgm_ix:	ds	2
+pgm_hl1:ds	2
+pgm_de1:ds	2
+pgm_bc1:ds	2
+pgm_af1:ds	2
+pgm_hl:	ds	2
+pgm_de:	ds	2
+pgm_bc:	ds	2
+pgm_af:	ds	2
+reg_stack equ	$
+pgm_sp:	ds	2
+pgm_pc:	ds	2
+pgm_msr:ds	2		; saved user MSR
+
+mmu_pdr:ds	64		; saved user MMU state
+
+brkadr:	ds	2		; breakpoint address
+brkval:	ds	1		; breakpoint memory contents
+reason:	ds	1		; trap reason code
+lastd:	ds	2		; last dump address
+lastz:	ds	2		; last disassembled address
+
+	ds	256		; space for monitor stack
+mon_stack:
+
+	end	DEBUG
