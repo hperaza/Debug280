@@ -808,18 +808,23 @@ rmatch:	ld	a,(hl)
 	ld	de,(lnptr)
 rm1:	ld	a,(hl)
 	or	a		; end of name?
-	jr	z,rm2		; return Z if yes
+	jr	z,rm4		; return Z if yes
 	cp	'='
 	jr	z,rm2
 	ld	c,a
 	ld	a,(de)
 	call	ucase
 	cp	c		; name matches?
-	jr	nz,rm2		; return NZ if not
+	jr	nz,rm4		; return NZ if not
 	inc	hl
 	inc	de
 	jr	rm1		; loop
-rm2:	pop	hl
+rm2:	ld	a,(de)
+	cp	"'"
+	jr	z,rm3
+	xor	a
+rm3:	or	a
+rm4:	pop	hl
 	ret
 
 shregs:	ld	hl,regdmp
