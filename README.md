@@ -14,14 +14,14 @@ Z280 MMU and system/user modes. In fact, part of the code is already there
 used by the dump command to display memory from another bank, etc.)
 
 The debugger includes a Z280 disassembler in a separate module that could
-be used by other applications.
+be used in other applications.
 
 As built, the debugger runs from address 0100h and uses memory up to 177Fh
 approximately (most of the space is taken up by the disassembler module);
 page zero is reserved for the Z280 interrupt/trap table. The code can be
 easily modified to run at a different address.
 
-The debugger has been tested with Bill Shen's Z280RC board (a HEX file is
+The debugger has been tested on Bill Shen's Z280RC board (a HEX file is
 included), and will be embedded into a future version of ZZmon.
 
 ## Debugger commands:
@@ -44,8 +44,8 @@ included), and will be embedded into a future version of ZZmon.
    Thus, if the B command is used to enter additional breakpoints, the
    instructions at the address of the older breakpoints will not be restored
    when the corresponding breakpoint is hit. Breakpoints are not persistent,
-   meaning that once hit, it will not be triggered again. That means that
-   you can place a second breakpoint after the first is hit.
+   meaning that once hit, it will not be triggered again. That also means that
+   you can place a second breakpoint after the first one is hit.
  * G*addr* -- Go to address *addr*. Starts executing the user code until a
    breakpoint is hit. If *addr* is not specified, the execution will continue
    from the current user PC value.
