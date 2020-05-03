@@ -30,6 +30,8 @@ TAB	equ	09h
 FALSE	equ	0
 TRUE	equ	NOT FALSE
 
+MAXBP	equ	8		; max number of breakpoints
+
 	cseg
 
 	public	GETB,GETAB,GETW,GETADR,PUTCH,AHEX,HLHEX
@@ -43,11 +45,12 @@ TRUE	equ	NOT FALSE
 DEBUG::	di
 	ld	sp,mon_stack	; setup local stack
 	call	init
-cmd:	ld	sp,mon_stack	; restore local stack
+cmd_loop:
+	ld	sp,mon_stack	; restore local stack
 	ld	hl,prompt
 	call	print		; output prompt
 	call	getln		; get command
-	push	cmd		; push return address
+	push	cmd_loop	; push return address
 	ld	hl,lnbuf
 	call	skipbl		; skip blanks and get command char
 	or	a
@@ -57,8 +60,6 @@ cmd:	ld	sp,mon_stack	; restore local stack
 	call	ucase		; convert command char to uppercase
 	cp	'X'		; show regs?
 	jp	z,showregs
-	cp	'T'		; trace (single-step)?
-	jp	z,trace
 	push	af
 	call	get_args	; parse command and get arguments
 	ld	bc,(arg3)	; load arguments into registers
@@ -74,23 +75,25 @@ cmd:	ld	sp,mon_stack	; restore local stack
 	cp	'E'		; examine?
 	jp	z,exam
 	cp	'B'		; set breakpoint?
-	jp	z,setbrk
+	jp	z,addbrk
 	cp	'C'		; clear breakpoint?
 	jp	z,clrbrk
 	cp	'G'		; go?
 	jp	z,run
+	cp	'T'		; trace (single-step)?
+	jp	z,trace
 	cp	'I'		; input?
 	jp	z,inport
 	cp	'O'		; output?
 	jp	z,outport
 	cp	'W'		; word?
 	jp	z,word
-	cp	'Z'		; disassemble?
+	cp	'L'		; list?
 	jp	z,disasm
 error:	call	cr_lf
 	ld	a,'?'		; unknown command
 	call	mon_putch
-	jr	cmd
+	jr	cmd_loop
 
 prompt:	db	CR,LF,"Z280>",0
 
@@ -161,7 +164,7 @@ eol:	ld	(hl),0		; end of input, append null char
 	ret
 ctrlc:	ld	hl,ctlcm
 	call	print
-	jp	cmd
+	jp	cmd_loop
 
 ctlcm:	db	"^C",CR,LF,0
 
@@ -459,29 +462,78 @@ outport:push	hl
 	ret
 
 ; W addr
-; Display word at addr
+; display Word at addr
 
 word:	call	out_addr	; output address
 	ld	hl,(hl)
 	jp	hlhex		; output contents
 
+; B
+; display current Breakpoints
 ; B addr
-; set Breakpoint at addr. It will be automatically removed when reached.
+; set Breakpoint at addr.
 
-setbrk:	ld	(brkadr),hl
-	ld	a,(hl)
-	ld	(brkval),a
-	ld	(hl),76h	; halt instruction (breakpoint-on-halt mode)
+addbrk:	ld	ix,bptbl	; get breapoint table address into IX
+	ld	a,(argset)
+	and	01h		; argument given?
+	jr	nz,setb		; set breakpoint if yes
+	ld	a,(numbp)
+	or	a		; any breakpoints set?
+	ret	z		; return if not
+	ld	b,a
+	ld	de,3
+dispbp:	ld	hl,(ix)
+	call	cr_lf
+	call	hlhex		; display breapoint address
+	add	ix,de
+	djnz	dispbp		; loop to process next
+	ret
+
+setb:	ld	a,(numbp)
+	cp	MAXBP		; maximum already reached?
+	jp	nc,error	; error if yes
+	or	a		; table empty?
+	jr	z,sb2		; branch if yes
+	ld	b,a
+	ld	de,3
+sb1:	cpw	hl,(ix)		; breakpoint already exists?
+	jp	z,error		; error if yes
+	add	ix,de
+	djnz	sb1		; else loop to check next entry
+sb2:	ldw	(ix),hl		; store breakpoint address
+	ld	hl,numbp
+	inc	(hl)		; new breakpoint address
 	ret
 
 ; C addr
-; Clear breakpoint at addr (TODO).
+; Clear breakpoint at addr.
 
-clrbrk:
+clrbrk:	ld	a,(argset)
+	and	01h
+	jp	z,error		; argument is mandatory
+	ld	ix,bptbl	; get breapoint table address into IX
+	ld	a,(numbp)
+	or	a		; any breakpoints set?
+	jp	z,error		; error if not
+	ld	b,a
+	ld	de,3
+cb1:	cpw	hl,(ix)		; breakpoint found?
+	jr	z,cb2		; exit loop if yes
+	add	ix,de
+	djnz	cb1		; loop to process next entry
+	jp	error		; breakpoint not found
+cb2:	ld	hl,numbp
+	dec	(hl)		; decrement breakpoint count
+	dec	b		; last used entry?
+	ret	z		; return if yes
+cb3:	ldw	hl,(ix+3)
+	ldw	(ix),hl		; else shuffle entries down
+	add	ix,de
+	djnz	cb3
 	ret
 
-; Z addr,num
-; Disassemble num instructions starting from addr
+; L addr,num
+; List (disassemble) num instructions starting from addr
 
 disasm:	ld	a,(argset)
 	bit	0,a		; address given?
@@ -547,12 +599,55 @@ r1:	ldw	(ix+2),hl	; store PC on return stack
 	res	0,(ix+1)	; clear SS bit of MSR
 	res	1,(ix+1)	; clear SSP bit of MSR
 	set	4,(ix+1)	; set BH bit of MSR
+	call	setbp		; set breakpoints in place
 	jp	continue
+
+; place breakpoints prior to executing user code
+
+setbp:	ld	ix,bptbl
+	ld	a,(numbp)
+	or	a		; any breakpoints defined?
+	ret	z		; return if not
+	ld	b,a
+	ld	de,(pgm_pc)
+set1:	ld	hl,(ix)		; get breakpoint address
+	ld	a,(hl)
+	ld	(ix+2),a	; remember original memory contents
+	cpw	hl,de
+	ld	(hl),76h	; store halt instruction (breakpoint-on-halt mode)
+	inc	ix
+	inc	ix
+	inc	ix
+	djnz	set1
+	ret
+
+; remove breakpoints from user code so they will not appear in the
+; disassembler listing and will not interfere with single-stepping
+
+rembp:	ld	ix,bptbl
+	ld	a,(numbp)
+	or	a		; any breakpoints defined?
+	ret	z		; return if not
+	ld	b,a
+	ld	de,3
+rem1:	ld	hl,(ix)		; get breakpoint address
+	ld	a,(ix+2)
+	ld	(hl),a		; restore original memory contents
+	add	ix,de
+	djnz	rem1
+	ret
 
 ; T
 ; Trace single instruction
+; T num
+; Trace num instructions
 
-trace:	ld	ix,(pgm_sp)
+trace:	ld	a,h
+	or	l
+	jr	nz,tr1
+	ld	hl,1		; no argument or zero count defaults to 1
+tr1:	ld	(tcount),hl
+trnext:	ld	ix,(pgm_sp)
 	ld	hl,(pgm_pc)	; store PC on return stack
 	ldw	(ix+2),hl	;  in case user changed it
 	set	0,(ix+1)	; set SS bit of MSR
@@ -608,7 +703,8 @@ cr_lf:	push	af
 ; trap entry point: saves all registers and current MMU status, and then
 ; jumps to the command loop.
 
-DBGTRP:	ld	(pgm_sp),sp
+debug_trap:
+	ld	(pgm_sp),sp
 	ld	sp,reg_stack
 	push	af		; push main reg bank
 	push	bc
@@ -636,8 +732,10 @@ DBGTRP:	ld	(pgm_sp),sp
 	ld	(pgm_msr),de	; save user MSR
 	ldw	de,(ix+2)
 	ld	(pgm_pc),de	; save user PC
-	ld	(lastz),de	; use as default for Z command
-	call	chkbrk
+	ld	(lastz),de	; use as default for L command
+	ld	a,(reason)
+	dec	a		; single-stepping?
+	call	nz,rembp	; remove breakpoints if not
 	call	pr_reason	; display trap reason
 	call	shregs		; display register contents
 	ld	hl,(pgm_pc)
@@ -647,24 +745,18 @@ DBGTRP:	ld	(pgm_sp),sp
 	call	mon_putch
 	call	DIS280		; display next instruction
 	call	cr_lf
-	ld	hl,(pgm_hl)
+	ld	a,(reason)
+	dec	a		; single-stepping?
+	jr	nz,dbg2		; branch if not
+	ld	hl,(tcount)
+	dec	hl
+	ld	(tcount),hl
+	ld	a,h
+	or	l		; trace count reached zero?
+	jp	nz,trnext	; trace next instruction if not
+dbg2:	ld	hl,(pgm_hl)
 	ld	(lastd),hl	; use HL value as default for D command
-	jp	cmd
-
-; restore instruction at breakpoint location
-
-chkbrk:	ld	a,(reason)	; check trap reason
-	or	a		; breakpoint?
-	ret	nz		; return if not
-	ld	hl,(brkadr)
-	ld	de,(pgm_pc)
-	cpw	hl,de		; breakpoint set by us?
-	ret	nz
-	ld	a,(brkval)
-	ld	(hl),a		; yes, remove it
-	ld	hl,0
-	ld	(brkadr),hl
-	ret
+	jp	cmd_loop
 
 ; display trap reason
 
@@ -709,7 +801,7 @@ atpc_msg:
 ; continue execution from last breakpoint or single-step operation
 
 continue:
-	call	rstmmu
+call	rstmmu		; restore user MMU state
 	ld	sp,pgm_iop
 	pop	hl
 	ld	c,IOP
@@ -749,7 +841,7 @@ showregs:
 	cp	'M'		; M?
 	jp	z,showmmu	; yes, display MMU status
 	ld	(lnptr),hl
-	ld	hl,regdmp
+	ld	hl,regdat
 chrg1:	ldw	de,(hl)		; get pointer to reg value into DE
 	ld	a,d
 	or	e		; end of list?
@@ -827,7 +919,7 @@ rm3:	or	a
 rm4:	pop	hl
 	ret
 
-shregs:	ld	hl,regdmp
+shregs:	ld	hl,regdat
 srg1:	ldw	de,(hl)		; get pointer to register value into DE
 	ld	a,d
 	or	e		; end of list?
@@ -845,7 +937,7 @@ srg1:	ldw	de,(hl)		; get pointer to register value into DE
 	inc	hl
 	jr	srg1
 
-regdmp:	dw	pgm_af
+regdat:	dw	pgm_af
 	db	CR,LF,"AF=",0
 	dw	pgm_bc
 	db	" BC=",0
@@ -1011,24 +1103,24 @@ iret2:	inc	sp
 iret1:	retil
 
 bptrp:	ld	(reason),0
-	jp	DBGTRP
+	jp	debug_trap
 
 sstrp:	ld	(reason),1
-	jp	DBGTRP
+	jp	debug_trap
 
 divtrp:	ld	(reason),2
-	jp	DBGTRP
+	jp	debug_trap
 
 acvtrp:	ld	(reason),3
-	jp	DBGTRP
+	jp	debug_trap
 
 prvins:	ld	(reason),4
-	jp	DBGTRP
+	jp	debug_trap
 
 eitrp1:	inc	sp
 	inc	sp
 eitrp:	ld	(reason),5
-	jp	DBGTRP
+	jp	debug_trap
 
 ;-----------------------------------------------------------------------
 
@@ -1061,11 +1153,16 @@ pgm_msr:ds	2		; saved user MSR
 
 mmu_pdr:ds	64		; saved user MMU state
 
+numbp:	ds	1		; number of breakpoints set
+bptbl:	ds	MAXBP*3		; breakpoint table: address + mem contents
+
 brkadr:	ds	2		; breakpoint address
 brkval:	ds	1		; breakpoint memory contents
+
 reason:	ds	1		; trap reason code
 lastd:	ds	2		; last dump address
 lastz:	ds	2		; last disassembled address
+tcount:	ds	2		; instruction trace count
 
 	ds	256		; space for monitor stack
 mon_stack:
