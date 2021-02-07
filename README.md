@@ -26,19 +26,19 @@ included), and will be embedded into a future version of ZZmon.
 
 ## Debugger commands
 
- * D *addr1*,*addr2* -- Dump memory from *addr1* to *addr2* included. If
+ * D *addr1*,*addr2* -- Dump memory from *addr1* to *addr2* inclusive. If
    *addr1* is omitted, the dump will continue from where the last dump
    operation stopped, or from the current contents of the user HL register
    after a breakpoint hit or a single-step operation. If *addr2* is omitted,
    a full 256-byte page will be output.
  * L *addr*,*n* -- List (disassemble) *n* instructions starting from *addr*.
-   If *addr* is not specified, the disassembly will continue from there the
+   If *addr* is not specified, the disassembly will continue from where the
    last L command ended, or from the current user PC after a breakpoint or
    single-step operation. If *n* is omitted, the next 16 instructions are
    displayed. Note that *n* is in hexadecimal.
  * E *addr* -- Examine/modify memory starting from *addr*. The address of the
    memory location is displayed, followed by the old contents. Entering a new
-   value modifies the contents, pressing enter on an empty line leaves the
+   value modifies the contents, pressing Enter on an empty line leaves the
    contents unchanged. End with Ctrl-C or with a dot.
  * F *addr1*,*addr2*,*byte* -- Fill memory region from *addr1* to *addr2*
    inclusive with *byte*. Any omitted parameter is assumed to be zero.
