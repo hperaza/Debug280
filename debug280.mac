@@ -473,7 +473,7 @@ word:	call	out_addr	; output address
 ; B addr
 ; set Breakpoint at addr.
 
-addbrk:	ld	ix,bptbl	; get breapoint table address into IX
+addbrk:	ld	ix,bptbl	; get breakpoint table address into IX
 	ld	a,(argset)
 	and	01h		; argument given?
 	jr	nz,setb		; set breakpoint if yes
@@ -484,7 +484,7 @@ addbrk:	ld	ix,bptbl	; get breapoint table address into IX
 	ld	de,3
 dispbp:	ld	hl,(ix)
 	call	cr_lf
-	call	hlhex		; display breapoint address
+	call	hlhex		; display breakpoint address
 	add	ix,de
 	djnz	dispbp		; loop to process next
 	ret
@@ -511,7 +511,7 @@ sb2:	ldw	(ix),hl		; store breakpoint address
 clrbrk:	ld	a,(argset)
 	and	01h
 	jp	z,error		; argument is mandatory
-	ld	ix,bptbl	; get breapoint table address into IX
+	ld	ix,bptbl	; get breakpoint table address into IX
 	ld	a,(numbp)
 	or	a		; any breakpoints set?
 	jp	z,error		; error if not
@@ -794,14 +794,14 @@ acv_msg:
 prv_msg:
 	db	CR,LF,"Privileged instruction",0
 ext_msg:
-	db	CR,LF,"Extended intruction",0
+	db	CR,LF,"Extended instruction",0
 atpc_msg:
 	db	" at PC=",0
 
 ; continue execution from last breakpoint or single-step operation
 
 continue:
-call	rstmmu		; restore user MMU state
+	call	rstmmu		; restore user MMU state
 	ld	sp,pgm_iop
 	pop	hl
 	ld	c,IOP
@@ -1129,7 +1129,7 @@ eitrp:	ld	(reason),5
 arg1:	ds	2		; fisrt command argument
 arg2:	ds	2		; second command argument
 arg3:	ds	2		; third command argument
-argset:	ds	1		; specified srgument bit mak
+argset:	ds	1		; specified argument bit mask
 
 lnbuf:	ds	40		; command line buffer
 lnptr:	ds	2		; command line pointer
